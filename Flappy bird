@@ -1,0 +1,215 @@
+import pygame
+import random
+import sys
+
+# Initialize Pygame
+pygame.init()
+pygame.mixer.init()
+
+# Constants
+SCREEN_WIDTH = 400
+SCREEN_HEIGHT = 600
+FPS = 60
+GRAVITY = 0.5
+FLAP_STRENGTH = -10
+PIPE_WIDTH = 70
+PIPE_GAP = 150
+PIPE_SPEED = 4
+BIRD_SIZE = 30 # Size for the bounding box and drawn shape
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+
+# Set up screen
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Modern Flappy Bird")
+clock = pygame.time.Clock()
+
+# Load sounds (If you don't have these files, the game will run silently)
+try:
+    flap_sound = pygame.mixer.Sound("flap.wav")
+    hit_sound = pygame.mixer.Sound("hit.wav")
+    score_sound = pygame.mixer.Sound("score.wav")
+    pygame.mixer.music.load("background.mp3")
+    pygame.mixer.music.play(-1)
+except:
+    print("Sound files not found; running without audio.")
+
+# Bird class - Now includes rotation logic
+class Bird:
+    def __init__(self):
+        self.x = 100
+        self.y = SCREEN_HEIGHT // 2
+        self.vel = 0
+        self.rect = pygame.Rect(self.x, self.y, BIRD_SIZE, BIRD_SIZE)
+        
+        # --- Rotation setup: Create a circular surface for the bird ---
+        self.image = pygame.Surface((BIRD_SIZE, BIRD_SIZE), pygame.SRCALPHA) 
+        pygame.draw.circle(self.image, RED, (BIRD_SIZE//2, BIRD_SIZE//2), BIRD_SIZE//2)
+        self.original_image = self.image.copy() # Store the unrotated image
+        
+        self.max_down_angle = 90  # Max angle when falling
+        self.max_up_angle = -20   # Max angle when flapping
+
+    def flap(self):
+        self.vel = FLAP_STRENGTH
+        if 'flap_sound' in globals():
+            flap_sound.play()
+
+    def update(self):
+        self.vel += GRAVITY
+        self.y += self.vel
+        self.rect.y = self.y
+
+    def draw(self, screen):
+        # Calculate angle: Scale the velocity (e.g., *3) and clamp the range
+        angle = max(self.max_up_angle, min(self.max_down_angle, self.vel * 3))
+        
+        # Rotate the image
+        rotated_image = pygame.transform.rotate(self.original_image, angle)
+        
+        # Recalculate position to keep the center of the image static after rotation
+        new_rect = rotated_image.get_rect(center=self.rect.center)
+        
+        # Draw the rotated bird
+        screen.blit(rotated_image, new_rect.topleft)
+
+# Pipe class
+class Pipe:
+    def __init__(self, x):
+        self.x = x
+        self.height = random.randint(50, SCREEN_HEIGHT - PIPE_GAP - 50)
+        self.top_rect = pygame.Rect(self.x, 0, PIPE_WIDTH, self.height)
+        self.bottom_rect = pygame.Rect(self.x, self.height + PIPE_GAP, PIPE_WIDTH, SCREEN_HEIGHT - self.height - PIPE_GAP)
+        self.passed = False
+
+    def update(self):
+        self.x -= PIPE_SPEED
+        self.top_rect.x = self.x
+        self.bottom_rect.x = self.x
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, GREEN, self.top_rect)
+        pygame.draw.rect(screen, GREEN, self.bottom_rect)
+
+# Particle class for effects
+class Particle:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.vel_x = random.uniform(-2, 2)
+        self.vel_y = random.uniform(-2, 2)
+        self.life = 30
+
+    def update(self):
+        self.x += self.vel_x
+        self.y += self.vel_y
+        self.life -= 1
+
+    def draw(self, screen):
+        if self.life > 0:
+            pygame.draw.circle(screen, WHITE, (int(self.x), int(self.y)), 2)
+
+# Main game loop
+def main():
+    bird = Bird()
+    pipes = [Pipe(SCREEN_WIDTH)]
+    particles = []
+    score = 0
+    font = pygame.font.SysFont(None, 36)
+    running = True
+
+    while running:
+        screen.fill(BLACK)
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    bird.flap()
+
+        # Update bird
+        bird.update()
+
+        # Update pipes and score
+        if pipes[-1].x < SCREEN_WIDTH - 200:
+            pipes.append(Pipe(SCREEN_WIDTH))
+            
+        pipes_to_remove = []
+        for pipe in pipes:
+            pipe.update()
+            
+            # Remove pipes that have left the screen
+            if pipe.x + PIPE_WIDTH < 0:
+                pipes_to_remove.append(pipe)
+            
+            # Score logic
+            if not pipe.passed and pipe.x + PIPE_WIDTH < bird.x:
+                pipe.passed = True
+                score += 1
+                if 'score_sound' in globals():
+                    score_sound.play()
+        
+        for pipe in pipes_to_remove:
+            pipes.remove(pipe)
+
+        # Collision Check (Pipes)
+        collision = False
+        for pipe in pipes:
+            if bird.rect.colliderect(pipe.top_rect) or bird.rect.colliderect(pipe.bottom_rect):
+                collision = True
+                break
+        
+        # Collision Check (Ground/Ceiling)
+        if bird.y < 0 or bird.y + BIRD_SIZE > SCREEN_HEIGHT:
+            collision = True
+        
+        if collision:
+            if 'hit_sound' in globals():
+                hit_sound.play()
+            
+            # Generate particles
+            for _ in range(20):
+                particles.append(Particle(bird.x + BIRD_SIZE//2, bird.y + BIRD_SIZE//2))
+            
+            # Reset game state
+            bird = Bird()
+            pipes = [Pipe(SCREEN_WIDTH)]
+            score = 0
+
+        # Update particles
+        particles_to_remove = []
+        for p in particles:
+            p.update()
+            if p.life <= 0:
+                particles_to_remove.append(p)
+        
+        for p in particles_to_remove:
+            particles.remove(p)
+
+
+        # --- DRAWING ---
+        for pipe in pipes:
+            pipe.draw(screen)
+        
+        bird.draw(screen)
+        
+        for p in particles:
+            p.draw(screen)
+        
+        # Draw score
+        score_text = font.render(f"Score: {score}", True, WHITE)
+        screen.blit(score_text, (10, 10))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
